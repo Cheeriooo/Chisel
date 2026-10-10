@@ -1,5 +1,6 @@
 import { applyPalette, GIFEncoder, quantize } from "gifenc";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Failures from "./Failures";
 import { fromRGBA, gaussianNoise, PIXELS, SIZE, toRGBA, type Schedule } from "./sampler";
 import type { Reply, Request } from "./worker";
 
@@ -292,6 +293,8 @@ export default function App() {
           <button className="quiet" disabled={!ready} onClick={reroll}>new seed</button>
         </div>
       </section>
+
+      <Failures />
 
       <footer>
         Emoji from Noto Emoji (Apache 2.0), Fluent Emoji (MIT) and Twemoji (CC BY 4.0). Built by Rakesh Sawant.

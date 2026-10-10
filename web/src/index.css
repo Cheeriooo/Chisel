@@ -96,6 +96,16 @@ input[type="number"] { width: 12ch; padding: 5px 8px; border: 2px solid var(--in
 .go:active:not(:disabled) { transform: translate(5px, 5px); box-shadow: 0 0 0 var(--ink); }
 .quiet { border-color: transparent; text-decoration: underline; padding-inline: 4px; justify-self: start; }
 
+.failures { grid-column: 1 / -1; border-top: 2px solid var(--ink); padding-top: 20px; margin-top: 24px; }
+.failures h2 { font: 900 clamp(32px, 6vw, 56px)/1 var(--display); letter-spacing: -0.03em; margin: 0 0 8px; }
+.failures > p { max-width: 62ch; color: var(--ink-soft); margin: 0 0 24px; }
+.failure-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 28px 24px; }
+.failure-grid figure { margin: 0; }
+.failure-images { display: flex; gap: 6px; }
+.failure-images img { flex: 1; min-width: 0; height: auto; aspect-ratio: 1; image-rendering: pixelated; border: 2px solid var(--ink); background: #fff; }
+.failure-grid figcaption { margin-top: 10px; color: var(--ink-soft); font-size: 13px; }
+.failure-grid figcaption strong { color: var(--ink); font: 600 17px/1.2 var(--display); display: block; margin-bottom: 4px; }
+
 footer { grid-column: 1 / -1; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-soft); color: var(--ink-soft); font-size: 12px; }
 
 @media (max-width: 760px) {
