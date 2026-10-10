@@ -1,0 +1,23 @@
+# Working docs (spec, plans, notes): local reference only
+specs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# Data, training artifacts
+data/
+runs/
+*.pt
+*.ckpt
+
+# Web
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
