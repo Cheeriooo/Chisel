@@ -55,6 +55,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [msPerStep, setMsPerStep] = useState(0);
   const [editing, setEditing] = useState(false); // true while the slab shows the user's drawing, not a result
+  const [hasBase, setHasBase] = useState(false); // mirrors base.current !== null, for rendering
   const [, redraw] = useState(0);
 
   const worker = useRef<Worker | null>(null);
@@ -132,7 +133,7 @@ export default function App() {
       event.currentTarget.setPointerCapture(event.pointerId);
       if (!editing) {
         // First touch after a result: go back to the drawing (sketch), or start a fresh hole in the latest image (inpaint).
-        if (mode === "inpaint") { base.current = final ?? base.current; mask.current.fill(0); }
+        if (mode === "inpaint") { base.current = final ?? base.current; setHasBase(!!base.current); mask.current.fill(0); }
         setEditing(true);
       }
       lastPoint.current = point;
@@ -155,7 +156,7 @@ export default function App() {
 
   const switchMode = (next: Mode) => {
     setMode(next);
-    if (next === "inpaint") { base.current = final; mask.current.fill(0); }
+    if (next === "inpaint") { base.current = final; setHasBase(!!final); mask.current.fill(0); }
     setEditing(next === "sketch" || (next === "inpaint" && !!final));
   };
 
@@ -237,7 +238,7 @@ export default function App() {
         <p className="hint">
           {mode === "generate" && "Pick a class and a seed. The same link always carves the same emoji."}
           {mode === "sketch" && "Draw a rough, filled-in shape on the slab. The model noises it part-way, then finishes it."}
-          {mode === "inpaint" && (final || base.current ? "Scrub out part of the image on the slab. The model refills only that part." : "Generate something first, then erase part of it.")}
+          {mode === "inpaint" && (final || hasBase ? "Scrub out part of the image on the slab. The model refills only that part." : "Generate something first, then erase part of it.")}
         </p>
 
         <fieldset>
@@ -285,7 +286,7 @@ export default function App() {
         </fieldset>
 
         <div className="actions">
-          <button className="go" disabled={!ready || (mode === "inpaint" && !base.current)} onClick={() => run()}>
+          <button className="go" disabled={!ready || (mode === "inpaint" && !hasBase)} onClick={() => run()}>
             {mode === "generate" ? "Carve" : mode === "sketch" ? "Complete my sketch" : "Fill the hole"}
           </button>
           <button className="quiet" disabled={!ready} onClick={reroll}>new seed</button>
