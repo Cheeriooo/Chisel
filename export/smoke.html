@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Chisel ONNX smoke test</title>
+<!--
+  Does the exported model run in a browser, on each backend, and give the
+  same numbers as Python? Serve the repo root and open this page:
+
+    python -m http.server 8000
+    http://localhost:8000/export/smoke.html?model=../runs/toy.onnx
+-->
+<pre id="log">running...</pre>
+<script type="module">
+import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.all.bundle.min.mjs";
+ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
+
+const log = document.getElementById("log");
+const params = new URLSearchParams(location.search);
+const say = (line) => {
+  log.textContent += "\n" + line;
+  // ?report=1 echoes each line into the web server's log, so a headless browser can be checked from a terminal.
+  if (params.has("report")) fetch("/smoke-report?" + encodeURIComponent(line)).catch(() => {});
+};
+const model = params.get("model") ?? "../runs/toy.onnx";
+const ref = await (await fetch(model.replace(/\.onnx$/, ".ref.json"))).json();
+
+// Same formula as export_onnx.py: x[i] = sin(i), t = [10, 500].
+const x = Float32Array.from({ length: 2 * 3 * 32 * 32 }, (_, i) => Math.sin(i));
+const feeds = {
+  x_t: new ort.Tensor("float32", x, [2, 3, 32, 32]),
+  t: new ort.Tensor("int64", BigInt64Array.from([10n, 500n]), [2]),
+};
+
+log.textContent = `model ${model}`;
+for (const backend of ["webgpu", "wasm"]) {
+  try {
+    const session = await ort.InferenceSession.create(model, { executionProviders: [backend] });
+    const out = (await session.run(feeds)).eps;  // first run includes shader compilation / warm-up
+    const start = performance.now();
+    for (let i = 0; i < 10; i++) await session.run(feeds);
+    const ms = (performance.now() - start) / 10;
+    let worst = 0;
+    for (let i = 0; i < ref.length; i++) worst = Math.max(worst, Math.abs(out.data[i] - ref[i]));
+    say(`${backend}: ${worst < 1e-3 ? "PASS" : "FAIL"}  max abs diff vs Python ${worst.toExponential(2)}  ${ms.toFixed(1)} ms per call (batch 2)`);
+  } catch (e) {
+    say(`${backend}: ERROR ${e.message}`);
+  }
+}
+say("done");
+</script>
