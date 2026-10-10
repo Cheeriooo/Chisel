@@ -34,6 +34,7 @@ p.add_argument("--pred", default="v", choices=["eps", "v"], help="what the netwo
 p.add_argument("--n", type=int, default=0, help="use only the first n images (0 = all); for the overfit test")
 p.add_argument("--sample-every", type=int, default=2500)
 p.add_argument("--seed", type=int, default=0)
+p.add_argument("--amp", action="store_true", help="mixed precision: faster on GPUs with tensor cores (Colab T4); leave off on GTX 16-series, which is prone to NaNs in fp16")
 args = p.parse_args()
 
 torch.manual_seed(args.seed)
@@ -57,6 +58,9 @@ opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
 # of gradient scale are unreliable at the very start, and a full-size step
 # from random weights can do lasting damage.
 sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1.0, (s + 1) / args.warmup))
+# Mixed precision: run the forward pass in 16-bit floats where safe. The scaler
+# multiplies the loss up before backward so tiny gradients do not round to zero.
+scaler = torch.amp.GradScaler(device, enabled=args.amp)
 
 step = 0
 ckpt_path = run / "ckpt.pt"
@@ -89,13 +93,17 @@ while step < args.steps:
     noise = torch.randn_like(x0)
     x_t = q_sample(x0, t, noise, alpha_bar)
     target = noise if args.pred == "eps" else v_target(x0, t, noise, alpha_bar)
-    loss = F.mse_loss(model(x_t, t, cls), target)
+    with torch.autocast(device, enabled=args.amp):
+        loss = F.mse_loss(model(x_t, t, cls).float(), target)
+    assert torch.isfinite(loss), f"loss became {loss.item()} at step {step}"
 
     opt.zero_grad()
-    loss.backward()
+    scaler.scale(loss).backward()
+    scaler.unscale_(opt)
     # Clip rare huge gradients (a single unlucky batch) instead of letting them wreck the weights.
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    opt.step()
+    scaler.step(opt)
+    scaler.update()
     sched.step()
     step += 1
 
