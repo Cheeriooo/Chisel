@@ -14,8 +14,9 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.utils import save_image
 
-RAW = Path("data/raw")
-CACHE = Path("data/emoji32.npz")
+ROOT = Path(__file__).resolve().parent.parent  # repo root, so scripts work from any directory
+RAW = ROOT / "data/raw"
+CACHE = ROOT / "data/emoji32.npz"
 SIZE = 32
 HELDOUT_FRACTION = 0.1
 EMOJI_TEST = "https://unicode.org/Public/emoji/latest/emoji-test.txt"
