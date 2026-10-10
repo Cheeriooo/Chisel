@@ -75,6 +75,7 @@ torch.onnx.export(
     model, example, str(onnx_path),
     input_names=["x_t", "t", "cls"], output_names=["eps"],
     dynamic_shapes=({0: batch}, {0: batch}, {0: batch}),
+    dynamo=True,  # the newer exporter; stated explicitly because older PyTorch versions default to the legacy one
     external_data=False,  # weights inside the .onnx: the browser fetches one file
 )
 
