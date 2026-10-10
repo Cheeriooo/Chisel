@@ -79,8 +79,110 @@ class TinyUNet(nn.Module):
         return self.conv_out(F.silu(self.norm_out(h)))
 
 
+class Attention(nn.Module):
+    """Self-attention over the pixels of a feature map.
+
+    A convolution only sees a 3x3 neighbourhood. Attention lets every position
+    look at every other one, which is how the model keeps a face symmetric or
+    a colour consistent across the image. Cost grows with (H*W)^2, so it is
+    used only at 8x8, where there are just 64 positions.
+    """
+
+    def __init__(self, ch: int):
+        super().__init__()
+        self.norm = nn.GroupNorm(8, ch)
+        self.qkv = nn.Conv2d(ch, ch * 3, 1)
+        self.out = nn.Conv2d(ch, ch, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, h, w = x.shape
+        q, k, v = self.qkv(self.norm(x)).reshape(b, 3, c, h * w).unbind(1)  # each [B, C, HW]
+        # weights[b, i, j]: how much position i takes from position j.
+        weights = torch.softmax(q.transpose(1, 2) @ k / math.sqrt(c), dim=-1)  # [B, HW, HW]
+        mixed = (v @ weights.transpose(1, 2)).reshape(b, c, h, w)
+        return x + self.out(mixed)
+
+
+class UNet(nn.Module):
+    """The full model: three resolutions (32, 16, 8), attention at 8x8, class-conditional.
+
+    `cls` is a class index in [0, num_classes]. The extra index num_classes is
+    the "null" class meaning "no label given". Training sometimes swaps the
+    real label for it, so one network learns both the conditional and the
+    unconditional prediction, which classifier-free guidance then combines.
+    """
+
+    def __init__(self, num_classes: int, ch: int = 24, mults: tuple[int, ...] = (1, 2, 4), blocks: int = 2):
+        super().__init__()
+        emb_dim = ch * 4
+        self.ch, self.null_class = ch, num_classes
+        self.time_mlp = nn.Sequential(nn.Linear(ch, emb_dim), nn.SiLU(), nn.Linear(emb_dim, emb_dim))
+        self.class_emb = nn.Embedding(num_classes + 1, emb_dim)
+        self.conv_in = nn.Conv2d(3, ch, 3, padding=1)
+
+        # Way down. `skips` records the channel count of every feature map
+        # that the way up will receive through a skip connection.
+        self.down = nn.ModuleList()
+        skips, c = [ch], ch
+        for level, mult in enumerate(mults):
+            last = level == len(mults) - 1
+            for _ in range(blocks):
+                self.down.append(ResBlock(c, ch * mult, emb_dim))
+                c = ch * mult
+                if last:
+                    self.down.append(Attention(c))
+                skips.append(c)
+            if not last:
+                self.down.append(nn.Conv2d(c, c, 3, stride=2, padding=1))  # halve the resolution
+                skips.append(c)
+
+        self.mid = nn.ModuleList([ResBlock(c, c, emb_dim), Attention(c), ResBlock(c, c, emb_dim)])
+
+        # Way up: mirror image, each block also taking one skip connection.
+        self.up = nn.ModuleList()
+        for level, mult in reversed(list(enumerate(mults))):
+            for _ in range(blocks + 1):
+                self.up.append(ResBlock(c + skips.pop(), ch * mult, emb_dim))
+                c = ch * mult
+                if level == len(mults) - 1:
+                    self.up.append(Attention(c))
+            if level > 0:
+                self.up.append(nn.Upsample(scale_factor=2.0, mode="nearest"))
+
+        self.norm_out = nn.GroupNorm(8, c)
+        self.conv_out = nn.Conv2d(c, 3, 3, padding=1)
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor, cls: torch.Tensor) -> torch.Tensor:
+        emb = self.time_mlp(timestep_embedding(t, self.ch)) + self.class_emb(cls)
+        h = self.conv_in(x)
+        skips = [h]
+        for layer in self.down:
+            h = layer(h, emb) if isinstance(layer, ResBlock) else layer(h)
+            if not isinstance(layer, Attention):  # attention refines the block before it; that pair gives one skip
+                skips.append(h)
+            else:
+                skips[-1] = h
+        for layer in self.mid:
+            h = layer(h, emb) if isinstance(layer, ResBlock) else layer(h)
+        for layer in self.up:
+            if isinstance(layer, ResBlock):
+                h = layer(torch.cat([h, skips.pop()], dim=1), emb)
+            else:
+                h = layer(h)
+        return self.conv_out(F.silu(self.norm_out(h)))
+
+
+def count_params(model: nn.Module) -> int:
+    return sum(p.numel() for p in model.parameters())
+
+
 if __name__ == "__main__":
-    model = TinyUNet()
     x, t = torch.randn(4, 3, 32, 32), torch.randint(0, 1000, (4,))
-    assert model(x, t).shape == x.shape
-    print(f"TinyUNet: {sum(p.numel() for p in model.parameters()):,} parameters, output shape ok")
+    assert TinyUNet()(x, t).shape == x.shape
+    print(f"TinyUNet: {count_params(TinyUNet()):,} parameters")
+    cls = torch.tensor([0, 3, 7, 8])  # 8 is the null class
+    for ch in [16, 24, 32, 48]:  # must be a multiple of 8 for GroupNorm
+        model = UNet(num_classes=8, ch=ch)
+        assert model(x, t, cls).shape == x.shape
+        n = count_params(model)
+        print(f"UNet ch={ch:<3} {n:>10,} parameters  {n * 4 / 2**20:5.1f} MB fp32  {n * 2 / 2**20:5.1f} MB fp16")

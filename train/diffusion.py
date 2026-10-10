@@ -73,6 +73,74 @@ def ddpm_sample(model, n: int, alpha_bar: torch.Tensor, device, seed: int = 0) -
     return x
 
 
+def v_target(x0: torch.Tensor, t: torch.Tensor, noise: torch.Tensor, alpha_bar: torch.Tensor) -> torch.Tensor:
+    """Training target for v-prediction: v = sqrt(a) * noise - sqrt(1 - a) * x0.
+
+    At low noise v is nearly the noise; at high noise it is nearly minus the
+    clean image. So the network is always asked for the part it cannot just
+    copy from its input, and the noisiest steps get a real training signal
+    (see finding F1 in the spec). Salimans & Ho 2022.
+    """
+    a = alpha_bar.to(x0.device, x0.dtype)[t].view(-1, 1, 1, 1)
+    return a.sqrt() * noise - (1 - a).sqrt() * x0
+
+
+def make_eps_fn(model, alpha_bar: torch.Tensor, cls: torch.Tensor, guidance: float = 1.0, pred: str = "eps"):
+    """Wrap a class-conditional model as eps_fn(x, t) -> predicted noise, for the samplers.
+
+    Classifier-free guidance: run the model with the label and with the null
+    label, then push past the conditional answer, away from the unconditional
+    one:  eps = eps_uncond + guidance * (eps_cond - eps_uncond).
+    guidance = 1 is plain conditional sampling, 0 ignores the label.
+    """
+    ab = alpha_bar.to(cls.device, torch.float32)
+    null = torch.full_like(cls, model.null_class)
+
+    def eps_fn(x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        if guidance == 1.0:
+            out = model(x, t, cls)
+        else:
+            # Both passes in one batch: half the calls, and the same trick the browser uses.
+            cond, uncond = model(torch.cat([x, x]), torch.cat([t, t]), torch.cat([cls, null])).chunk(2)
+            out = uncond + guidance * (cond - uncond)
+        if pred == "v":  # convert v to noise: eps = sqrt(a) * v + sqrt(1 - a) * x_t
+            a = ab[t].view(-1, 1, 1, 1)
+            out = a.sqrt() * out + (1 - a).sqrt() * x
+        return out
+
+    return eps_fn
+
+
+def ddim_timesteps(steps: int, total: int = T) -> list[int]:
+    """`steps` timesteps evenly spaced from total - 1 down to 0, e.g. 20 of the 1000."""
+    return torch.linspace(total - 1, 0, steps).round().long().tolist()
+
+
+@torch.no_grad()
+def ddim_sample(eps_fn, x: torch.Tensor, alpha_bar: torch.Tensor, steps: int = 20, return_all: bool = False):
+    """Deterministic sampling (DDIM, eta = 0) from starting noise `x` in a handful of steps.
+
+    Each step: guess the clean image, then re-noise that guess to the next,
+    lower noise level using the SAME predicted noise rather than fresh noise.
+    Nothing random happens after x is chosen, so the starting noise fully
+    determines the image, which is what makes seeds shareable.
+
+    With return_all, also returns the x_t and the x0 guess at every step
+    (what the web app caches for scrubbing).
+    """
+    ab = alpha_bar.to(x.device, torch.float32)
+    ts = ddim_timesteps(steps, len(ab))
+    history = []
+    for i, t in enumerate(ts):
+        a = ab[t]
+        a_prev = ab[ts[i + 1]] if i + 1 < len(ts) else torch.ones((), device=x.device)
+        x0 = predict_x0(x, eps_fn(x, torch.full((len(x),), t, device=x.device)), a)
+        eps = (x - a.sqrt() * x0) / (1 - a).sqrt()  # recompute so eps agrees with the clamped x0
+        history.append((x, x0))
+        x = a_prev.sqrt() * x0 + (1 - a_prev).sqrt() * eps
+    return (x, history) if return_all else x
+
+
 if __name__ == "__main__":
     from pathlib import Path
 

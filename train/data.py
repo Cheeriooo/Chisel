@@ -209,6 +209,23 @@ class EmojiDataset(Dataset):
             x = x.flip(-1)  # last dimension is width
         return x, y
 
+    def to(self, device) -> "EmojiDataset":
+        self.x, self.y = self.x.to(device), self.y.to(device)
+        return self
+
+    def random_batch(self, n: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """n random images with the same flip rule as __getitem__, done for the whole batch at once.
+
+        With the data already on the GPU this replaces a DataLoader: no worker
+        processes, no copying, and the dataset is small enough not to need them.
+        """
+        i = torch.randint(len(self.x), (n,), device=self.x.device)
+        x, y = self.x[i], self.y[i]
+        if self.flip:
+            flip = (torch.rand(n, device=x.device) < 0.5) & ~torch.isin(y, torch.tensor(NO_FLIP, device=y.device))
+            x = torch.where(flip[:, None, None, None], x.flip(-1), x)
+        return x, y
+
 
 if __name__ == "__main__":
     assert base_key("1f3c3 1f3fb 200d 2640 fe0f".split()) == "1f3c3"
@@ -229,6 +246,11 @@ if __name__ == "__main__":
     assert -1 <= train.x.min() and train.x.max() <= 1
     symbol = next(i for i in range(len(train)) if train.y[i].item() in NO_FLIP)
     assert all(torch.equal(train[symbol][0], train.x[symbol]) for _ in range(1000)), "a symbol was flipped"
+    bx, by = train.random_batch(2000)
+    originals = train.x[train.y == NO_FLIP[0]]
+    # Exact comparison: torch.cdist is only approximate and reports small non-zero distances for identical rows.
+    assert all((originals == img).flatten(1).all(1).any() for img in bx[by == NO_FLIP[0]]), "random_batch flipped a symbol"
+    assert not all((train.x == img).flatten(1).all(1).any() for img in bx[:200]), "random_batch never flips"
     face = next(i for i in range(len(train)) if train.y[i].item() not in NO_FLIP and not torch.equal(train.x[i], train.x[i].flip(-1)))
     assert any(not torch.equal(train[face][0], train.x[face]) for _ in range(100)), "flip never happens"
 
