@@ -112,24 +112,44 @@ def make_eps_fn(model, alpha_bar: torch.Tensor, cls: torch.Tensor, guidance: flo
 
 
 def ddim_timesteps(steps: int, total: int = T) -> list[int]:
-    """`steps` timesteps evenly spaced from total - 1 down to 0, e.g. 20 of the 1000."""
-    return torch.linspace(total - 1, 0, steps).round().long().tolist()
+    """`steps` timesteps evenly spaced from total - 1 down to 0, e.g. 20 of the 1000.
+
+    Integer arithmetic only (round-half-up written as a floor division), so the
+    TypeScript sampler gets the identical list without float rounding questions.
+    """
+    if steps == 1:
+        return [total - 1]
+    return [((total - 1) * (steps - 1 - i) * 2 + (steps - 1)) // (2 * (steps - 1)) for i in range(steps)]
 
 
 @torch.no_grad()
-def ddim_sample(eps_fn, x: torch.Tensor, alpha_bar: torch.Tensor, steps: int = 20, return_all: bool = False):
-    """Deterministic sampling (DDIM, eta = 0) from starting noise `x` in a handful of steps.
+def ddim_sample(eps_fn, noise: torch.Tensor, alpha_bar: torch.Tensor, steps: int = 20, init: torch.Tensor | None = None,
+                strength: float = 1.0, mask: torch.Tensor | None = None, return_all: bool = False):
+    """Deterministic sampling (DDIM, eta = 0) in a handful of steps.
 
     Each step: guess the clean image, then re-noise that guess to the next,
     lower noise level using the SAME predicted noise rather than fresh noise.
-    Nothing random happens after x is chosen, so the starting noise fully
+    Nothing random happens after `noise` is chosen, so the starting noise fully
     determines the image, which is what makes seeds shareable.
+
+    Three modes:
+      plain      init=None: start from `noise`.
+      SDEdit     init=image: noise the image part-way and denoise from there.
+                 strength 1.0 ignores the image, 0.1 barely changes it.
+      inpainting init=image, mask=[B,1,H,W] with 1 where the model may paint:
+                 after every step the kept region is overwritten with the
+                 original image noised to the current level, so the model
+                 always sees a consistent picture around the hole.
 
     With return_all, also returns the x_t and the x0 guess at every step
     (what the web app caches for scrubbing).
     """
-    ab = alpha_bar.to(x.device, torch.float32)
+    ab = alpha_bar.to(noise.device, torch.float32)
     ts = ddim_timesteps(steps, len(ab))
+    x = noise
+    if init is not None and mask is None:
+        ts = ts[len(ts) - max(1, min(steps, int(strength * steps + 0.5))):]  # skip the noisiest steps
+        x = ab[ts[0]].sqrt() * init + (1 - ab[ts[0]]).sqrt() * noise
     history = []
     for i, t in enumerate(ts):
         a = ab[t]
@@ -138,6 +158,8 @@ def ddim_sample(eps_fn, x: torch.Tensor, alpha_bar: torch.Tensor, steps: int = 2
         eps = (x - a.sqrt() * x0) / (1 - a).sqrt()  # recompute so eps agrees with the clamped x0
         history.append((x, x0))
         x = a_prev.sqrt() * x0 + (1 - a_prev).sqrt() * eps
+        if mask is not None:
+            x = mask * x + (1 - mask) * (a_prev.sqrt() * init + (1 - a_prev).sqrt() * noise)
     return (x, history) if return_all else x
 
 
@@ -178,6 +200,18 @@ if __name__ == "__main__":
     print(f"ddpm_sample with a perfect denoiser: worst distance to a training image {dist.min(1).values.max():.1e}, "
           f"{dist.argmin(1).unique().numel()} of 8 images reached")
     assert dist.min(1).values.max() < 1e-4 and dist.argmin(1).unique().numel() >= 6
+
+    assert ddim_timesteps(20)[:3] == [999, 946, 894] and ddim_timesteps(20)[-1] == 0 and ddim_timesteps(5) == [999, 749, 500, 250, 0]
+    noise8 = torch.randn(8, 3, 32, 32, generator=torch.Generator().manual_seed(1))
+    again = ddim_sample(perfect_denoiser, noise8, ab, 20)
+    assert torch.equal(again, ddim_sample(perfect_denoiser, noise8, ab, 20)), "DDIM is not deterministic"
+    # Inpainting with the left half kept: the kept half must come back untouched.
+    keep_left = torch.zeros(1, 1, 32, 32); keep_left[..., 16:] = 1
+    filled = ddim_sample(perfect_denoiser, noise8, ab, 20, init=X, mask=keep_left)
+    assert torch.allclose(filled[..., :16], X[..., :16], atol=1e-5), "inpainting changed pixels outside the mask"
+    # SDEdit at low strength stays near the input.
+    assert (ddim_sample(perfect_denoiser, noise8, ab, 20, init=X, strength=0.2) - X).abs().mean() < 0.02
+    print("ddim_sample: deterministic, inpainting keeps known pixels, low-strength SDEdit stays close")
 
     Path("runs").mkdir(exist_ok=True)
     # Noised images go outside [-1, 1]; clamp for viewing only.

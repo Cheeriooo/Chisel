@@ -6,7 +6,7 @@
   same numbers as Python? Serve the repo root and open this page:
 
     python -m http.server 8000
-    http://localhost:8000/export/smoke.html?model=../runs/toy.onnx
+    http://localhost:8000/export/smoke.html?model=../runs/base/export/chisel.onnx
 -->
 <pre id="log">running...</pre>
 <script type="module">
@@ -20,14 +20,16 @@ const say = (line) => {
   // ?report=1 echoes each line into the web server's log, so a headless browser can be checked from a terminal.
   if (params.has("report")) fetch("/smoke-report?" + encodeURIComponent(line)).catch(() => {});
 };
-const model = params.get("model") ?? "../runs/toy.onnx";
+const model = params.get("model") ?? "../runs/base/export/chisel.onnx";
 const ref = await (await fetch(model.replace(/\.onnx$/, ".ref.json"))).json();
 
-// Same formula as export_onnx.py: x[i] = sin(i), t = [10, 500].
+// Same formula as export_onnx.py: x[i] = sin(i), t = [10, 500], cls = [0, null class].
+const schedule = await (await fetch(new URL("schedule.json", new URL(model, location.href)))).json();
 const x = Float32Array.from({ length: 2 * 3 * 32 * 32 }, (_, i) => Math.sin(i));
 const feeds = {
   x_t: new ort.Tensor("float32", x, [2, 3, 32, 32]),
   t: new ort.Tensor("int64", BigInt64Array.from([10n, 500n]), [2]),
+  cls: new ort.Tensor("int64", BigInt64Array.from([0n, BigInt(schedule.null_class)]), [2]),
 };
 
 log.textContent = `model ${model}`;

@@ -1,0 +1,109 @@
+/* A stonemason's bench: limestone, ink, one vermilion chalk line. */
+:root {
+  --stone: #ece7df;
+  --stone-deep: #dcd5c9;
+  --ink: #1c1a17;
+  --ink-soft: #6b655c;
+  --chalk: #e2401c;
+  --display: "Fraunces", Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font: 14px/1.5 var(--mono);
+  background-color: var(--stone);
+  /* faint grain so the page reads as a surface, not a fill */
+  background-image: radial-gradient(rgb(28 26 23 / 0.07) 1px, transparent 1px);
+  background-size: 5px 5px;
+}
+
+.shop {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 40px 24px 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+  gap: 32px 56px;
+}
+
+.mast { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 32px; border-bottom: 2px solid var(--ink); padding-bottom: 20px; }
+.mast h1 { font: 900 clamp(56px, 11vw, 120px)/0.85 var(--display); font-variation-settings: "SOFT" 0, "WONK" 1; letter-spacing: -0.04em; margin: 0; }
+.mast p { max-width: 44ch; margin: 0; color: var(--ink-soft); }
+
+/* The slab the image is carved from. The offset shadow is the block's thickness. */
+.slab { position: relative; aspect-ratio: 1; border: 2px solid var(--ink); background: #fff; box-shadow: 10px 10px 0 var(--ink); }
+.slab canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
+.slab.drawable canvas { cursor: crosshair; }
+.veil { position: absolute; inset: 0; display: grid; place-items: center; background: rgb(236 231 223 / 0.92); padding: 24px; text-align: center; }
+.veil.error { color: var(--chalk); }
+
+/* The scrubber is a ruler: one tick per denoising step. */
+.ruler { margin-top: 30px; }
+.ruler input { width: 100%; height: 34px; margin: 0; appearance: none; background: transparent; cursor: ew-resize; }
+.ruler input::-webkit-slider-runnable-track {
+  height: 34px; border: 2px solid var(--ink); border-top-width: 0;
+  background: repeating-linear-gradient(90deg, var(--ink) 0 1px, transparent 1px calc((100% - 1px) / var(--ticks, 20))) 0 0 / 100% 12px no-repeat, var(--stone-deep);
+}
+.ruler input::-moz-range-track {
+  height: 34px; border: 2px solid var(--ink); border-top-width: 0;
+  background: repeating-linear-gradient(90deg, var(--ink) 0 1px, transparent 1px calc((100% - 1px) / var(--ticks, 20))) 0 0 / 100% 12px no-repeat, var(--stone-deep);
+}
+.ruler input::-webkit-slider-thumb { appearance: none; width: 10px; height: 46px; margin-top: -8px; background: var(--chalk); border: 0; border-radius: 0; }
+.ruler input::-moz-range-thumb { width: 10px; height: 46px; background: var(--chalk); border: 0; border-radius: 0; }
+.ruler input:disabled { opacity: 0.45; cursor: default; }
+.ruler-ends { display: flex; justify-content: space-between; margin-top: 6px; color: var(--ink-soft); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+.ruler-ends span:nth-child(2) { color: var(--ink); }
+
+.row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.readout { margin: 14px 0 0; color: var(--ink-soft); font-size: 12px; }
+
+button, input[type="number"] { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 2px solid var(--ink); padding: 6px 12px; border-radius: 0; }
+button:disabled { opacity: 0.4; cursor: default; }
+button[aria-pressed="true"] { background: var(--ink); color: var(--stone); }
+:focus-visible { outline: 3px solid var(--chalk); outline-offset: 2px; }
+
+.seg { display: inline-flex; }
+.seg button + button { border-left-width: 0; }
+.modes { display: flex; }
+.modes button { flex: 1; padding: 10px 0; font: 600 20px/1 var(--display); }
+
+.hint { min-height: 3em; margin: 12px 0 4px; color: var(--ink-soft); }
+
+fieldset { border: 0; border-top: 2px solid var(--ink); margin: 18px 0 0; padding: 14px 0 0; display: grid; gap: 14px; }
+legend { padding: 0 10px 0 0; font: 600 18px/1 var(--display); font-style: italic; }
+
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.chips button { text-align: left; padding: 6px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.palette { display: flex; gap: 6px; flex-wrap: wrap; }
+.palette button { width: 30px; height: 30px; padding: 0; }
+.palette button[aria-pressed="true"] { outline: 3px solid var(--chalk); outline-offset: 2px; }
+
+label, .field { display: grid; grid-template-columns: 9ch 4ch 1fr; align-items: center; gap: 4px 8px; }
+.field { grid-template-columns: 9ch 1fr; }
+label small { grid-column: 1 / -1; color: var(--ink-soft); font-size: 12px; }
+output { font-weight: 600; }
+input[type="range"] { accent-color: var(--chalk); width: 100%; }
+input[type="number"] { width: 12ch; padding: 5px 8px; border: 2px solid var(--ink); background: #fff; border-radius: 0; }
+
+.actions { display: flex; gap: 10px; margin-top: 22px; }
+.go { flex: 1; padding: 14px; background: var(--chalk); border-color: var(--ink); color: #fff; font: 600 22px/1 var(--display); box-shadow: 5px 5px 0 var(--ink); transition: transform 80ms, box-shadow 80ms; }
+.go:active:not(:disabled) { transform: translate(5px, 5px); box-shadow: 0 0 0 var(--ink); }
+.quiet { border-color: transparent; text-decoration: underline; padding-inline: 4px; justify-self: start; }
+
+footer { grid-column: 1 / -1; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-soft); color: var(--ink-soft); font-size: 12px; }
+
+@media (max-width: 760px) {
+  .shop { grid-template-columns: minmax(0, 1fr); padding: 20px 16px; gap: 24px; }
+  .mast { flex-direction: column; gap: 12px; }
+  .slab { box-shadow: 6px 6px 0 var(--ink); margin-right: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .go { transition: none; }
+}
