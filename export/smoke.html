@@ -36,7 +36,7 @@ log.textContent = `model ${model}`;
 for (const backend of ["webgpu", "wasm"]) {
   try {
     const session = await ort.InferenceSession.create(model, { executionProviders: [backend] });
-    const out = (await session.run(feeds)).eps;  // first run includes shader compilation / warm-up
+    const out = (await session.run(feeds)).out;  // first run includes shader compilation / warm-up
     const start = performance.now();
     for (let i = 0; i < 10; i++) await session.run(feeds);
     const ms = (performance.now() - start) / 10;

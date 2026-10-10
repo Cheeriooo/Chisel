@@ -7,8 +7,11 @@ scrub and edit between steps.
   python export/export_onnx.py --run base
 
 Writes into runs/<run>/export/:
-  chisel.onnx     inputs x_t [B,3,32,32] float32, t [B] int64, cls [B] int64 -> eps [B,3,32,32]
-  schedule.json   alpha_bar table, class names, null class index (the browser never recomputes these)
+  chisel.onnx     inputs x_t [B,3,32,32] float32, t [B] int64, cls [B] int64 -> out [B,3,32,32]
+                  `out` is whatever the network was trained to predict (noise or v);
+                  schedule.json says which, and the sampler converts v to noise itself
+  schedule.json   alpha_bar table, class names, null class index, prediction type
+                  (the browser never recomputes these)
   chisel.ref.json one model call on a formula input, for export/smoke.html
   parity.bin      starting noise + the Python sampler's 20-step result, for the JS sampler test
 """
@@ -31,26 +34,6 @@ from unet import UNet  # noqa: E402
 PARITY = dict(cls=0, guidance=2.0, steps=20, seed=0)
 
 
-class EpsModel(torch.nn.Module):
-    """What gets exported: always outputs predicted noise, whatever the network was trained to predict.
-
-    For a v-prediction network the conversion eps = sqrt(a) * v + sqrt(1 - a) * x_t
-    is baked into the graph, so the browser sampler has one contract to follow.
-    """
-
-    def __init__(self, model: UNet, alpha_bar: torch.Tensor, pred: str):
-        super().__init__()
-        self.model, self.pred = model, pred
-        self.register_buffer("alpha_bar", alpha_bar.float())
-
-    def forward(self, x_t: torch.Tensor, t: torch.Tensor, cls: torch.Tensor) -> torch.Tensor:
-        out = self.model(x_t, t, cls)
-        if self.pred == "v":
-            a = self.alpha_bar[t].view(-1, 1, 1, 1)
-            out = a.sqrt() * out + (1 - a).sqrt() * x_t
-        return out
-
-
 p = argparse.ArgumentParser()
 p.add_argument("--run", default="base")
 args = p.parse_args()
@@ -60,7 +43,11 @@ cfg = ckpt["args"]
 unet = UNet(len(CLASSES), ch=cfg["ch"])
 unet.load_state_dict(ckpt["ema"])  # the averaged weights are the ones that sample well
 alpha_bar = make_alpha_bar(cfg["schedule"])
-model = EpsModel(unet, alpha_bar, cfg["pred"]).eval()
+# The raw network is exported as-is. An earlier version baked the v -> noise
+# conversion (a lookup of alpha_bar[t]) into the graph; that gave wrong numbers
+# on the WebGPU backend while passing on WASM, so the conversion now lives in
+# the sampler. See finding F9 in the spec.
+model = unet.eval()
 
 out_dir = ROOT / "runs" / args.run / "export"
 out_dir.mkdir(exist_ok=True)
@@ -73,7 +60,7 @@ example = (torch.randn(2, 3, 32, 32), torch.tensor([10, 500]), torch.tensor([0, 
 batch = torch.export.Dim("batch")
 torch.onnx.export(
     model, example, str(onnx_path),
-    input_names=["x_t", "t", "cls"], output_names=["eps"],
+    input_names=["x_t", "t", "cls"], output_names=["out"],
     dynamic_shapes=({0: batch}, {0: batch}, {0: batch}),
     dynamo=True,  # the newer exporter; stated explicitly because older PyTorch versions default to the legacy one
     external_data=False,  # weights inside the .onnx: the browser fetches one file
@@ -96,7 +83,7 @@ print(f"{onnx_path.name}: {onnx_path.stat().st_size / 2**20:.2f} MB, max abs dif
 assert worst < 1e-3, "ONNX output does not match PyTorch"
 
 (out_dir / "schedule.json").write_text(json.dumps(dict(
-    T=len(alpha_bar), classes=CLASSES, null_class=unet.null_class,
+    T=len(alpha_bar), classes=CLASSES, null_class=unet.null_class, pred=cfg["pred"],
     alpha_bar=[float(v) for v in alpha_bar.float()],  # float32 values, exactly what PyTorch sampling uses
 )))
 

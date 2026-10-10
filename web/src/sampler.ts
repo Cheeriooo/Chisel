@@ -12,11 +12,13 @@ export type Schedule = {
   T: number;
   classes: string[];
   null_class: number;
+  /** What the network outputs: predicted noise, or v (see v_target in train/diffusion.py). */
+  pred: "eps" | "v";
   alpha_bar: number[]; // exported from Python, never recomputed here
 };
 
-/** One network call on a batch: x is B images back to back; returns B noise predictions. */
-export type EpsFn = (x: Float32Array, t: number, cls: number[]) => Promise<Float32Array>;
+/** One network call on a batch: x is B images back to back; returns B raw network outputs. */
+export type ModelFn = (x: Float32Array, t: number, cls: number[]) => Promise<Float32Array>;
 
 export type SampleOptions = {
   cls: number;
@@ -62,7 +64,7 @@ export function gaussianNoise(seed: number, length = LEN): Float32Array {
 }
 
 /** Runs the sampler. Returns the final image, or null if cancelled. */
-export async function sample(eps: EpsFn, schedule: Schedule, opts: SampleOptions): Promise<Float32Array | null> {
+export async function sample(model: ModelFn, schedule: Schedule, opts: SampleOptions): Promise<Float32Array | null> {
   const { cls, guidance, steps, noise, init, mask } = opts;
   const ab = schedule.alpha_bar;
   let ts = ddimTimesteps(steps, schedule.T);
@@ -87,15 +89,18 @@ export async function sample(eps: EpsFn, schedule: Schedule, opts: SampleOptions
     // then step past the conditional answer, away from the unconditional one.
     let e: Float32Array;
     if (guidance === 1) {
-      e = await eps(x, t, [cls]);
+      e = await model(x, t, [cls]);
     } else {
       const both = new Float32Array(2 * LEN);
       both.set(x, 0);
       both.set(x, LEN);
-      const out = await eps(both, t, [cls, schedule.null_class]);
+      const out = await model(both, t, [cls, schedule.null_class]);
       e = new Float32Array(LEN);
       for (let i = 0; i < LEN; i++) e[i] = out[LEN + i] + guidance * (out[i] - out[LEN + i]);
     }
+
+    // A v-prediction network's output becomes predicted noise: eps = sqrt(a) * v + sqrt(1 - a) * x_t.
+    if (schedule.pred === "v") for (let i = 0; i < LEN; i++) e[i] = Math.sqrt(a) * e[i] + Math.sqrt(1 - a) * x[i];
 
     const x0 = new Float32Array(LEN);
     const next = new Float32Array(LEN);

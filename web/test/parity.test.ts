@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as ort from "onnxruntime-node";
 import { expect, test } from "vitest";
-import { ddimTimesteps, gaussianNoise, LEN, sample, type EpsFn, type Schedule } from "../src/sampler";
+import { ddimTimesteps, gaussianNoise, LEN, sample, type ModelFn, type Schedule } from "../src/sampler";
 
 const dir = resolve(import.meta.dirname, "../../runs", process.env.RUN ?? "base", "export");
 
@@ -36,17 +36,17 @@ test.skipIf(!existsSync(resolve(dir, "parity.bin")))("20-step sample matches Pyt
   const expected = fixture.slice(LEN);
 
   const session = await ort.InferenceSession.create(resolve(dir, "chisel.onnx"));
-  const eps: EpsFn = async (x, t, cls) => {
+  const model: ModelFn = async (x, t, cls) => {
     const b = cls.length;
     const out = await session.run({
       x_t: new ort.Tensor("float32", x, [b, 3, 32, 32]),
       t: new ort.Tensor("int64", BigInt64Array.from(cls.map(() => BigInt(t))), [b]),
       cls: new ort.Tensor("int64", BigInt64Array.from(cls.map(BigInt)), [b]),
     });
-    return out.eps.data as Float32Array;
+    return out.out.data as Float32Array;
   };
 
-  const got = await sample(eps, schedule, { cls: settings.cls, guidance: settings.guidance, steps: settings.steps, noise });
+  const got = await sample(model, schedule, { cls: settings.cls, guidance: settings.guidance, steps: settings.steps, noise });
   let worst = 0;
   for (let i = 0; i < LEN; i++) worst = Math.max(worst, Math.abs(got![i] - expected[i]));
   console.log(`max abs pixel diff, TypeScript vs Python sampler: ${worst.toExponential(2)}`);
